@@ -1,0 +1,23 @@
+name: Build APK
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+jobs:
+  android:
+    runs-on: ubuntu-22.04
+    container:
+      image: barichello/godot-ci:4.3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build APK
+        run: |
+          export HOME=/root
+          mkdir -p build
+          godot --headless --verbose --editor --quit || true
+          godot --headless --verbose --export-debug "Android Debug" build/arena-bola.apk
+          ls -la build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arena-bola-apk
+          path: build/arena-bola.apk
