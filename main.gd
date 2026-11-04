@@ -46,6 +46,7 @@ class Box:
 	var sy := 0.0
 	var sw := 0.0
 	var sh := 0.0
+	var o := 0
 
 class Item:
 	var x := 0.0
@@ -102,6 +103,7 @@ class Ent:
 	var lky := 0.0
 	var tx := 0.0
 	var ty := 0.0
+	var acc := 0.0
 	var tg = null
 	var has_wp := false
 	var wpx := 0.0
@@ -168,7 +170,13 @@ var FA: Array = []
 var MM: ImageTexture
 
 var ents: Array = []
-var items: Array = []
+var IG := {}
+var DBK := {}
+var TT: ImageTexture
+var terr: Node2D
+var frame_i := 0
+var cam_x := 0.0
+var cam_y := 0.0
 var bul: Array = []
 var fx: Array = []
 var feed: Array = []
@@ -210,6 +218,10 @@ var seed_edit: LineEdit
 var grid: GridContainer
 
 # ---------------------------------------------------------------- util
+func _draw_terr():
+	if TT != null:
+		terr.draw_texture_rect(TT, Rect2(0, 0, W, W), false)
+
 func hc(s: String) -> Color:
 	if not CC.has(s):
 		CC[s] = Color(s)
@@ -247,7 +259,15 @@ func fmt(s: float) -> String:
 
 func _ready():
 	randomize()
+	Engine.max_fps = 60
+	RenderingServer.set_default_clear_color(hc("#10161e"))
 	font = ThemeDB.fallback_font
+	terr = Node2D.new()
+	terr.show_behind_parent = true
+	terr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	terr.visible = false
+	add_child(terr)
+	terr.draw.connect(_draw_terr)
 	RC = [hc("#9aa7b5"), hc("#3b82f6"), hc("#facc15"), hc("#a855f7"), hc("#ef4444")]
 	TXC = [
 		[hc("#2a6f9e"), hc("#2c75a6"), hc("#276a98")],
@@ -671,6 +691,10 @@ func pdoor(x: float, y: float, w: float, h: float, f: int):
 	b.h = h
 	b.f = f
 	DR.append(b)
+	var dk := int((x + w / 2.0) / 250.0) * 128 + int((y + h / 2.0) / 250.0)
+	if not DBK.has(dk):
+		DBK[dk] = []
+	DBK[dk].append(b)
 
 func bb_add(b: Box):
 	B.append(b)
@@ -738,6 +762,7 @@ func nf(x: float, y: float) -> float:
 func gen_world(sd: String):
 	rng.seed = sd.hash()
 	DR = []
+	DBK = {}
 	walls = []
 	bk = {}
 	B = []
@@ -959,9 +984,16 @@ func gen_world(sd: String):
 		pbox(x6 - rk * .7, y6 - rk * .7, rk * 1.4, rk * 1.4, 2)
 	# minimap
 	var img := Image.create(400, 400, false, Image.FORMAT_RGB8)
+	var timg := Image.create(GN, GN, false, Image.FORMAT_RGB8)
+	var brc := [hc("#9a6a35"), hc("#8f5f2d"), hc("#a27038")]
 	for jj in range(GN):
 		for ii in range(GN):
-			img.set_pixel(ii, jj, TXC[GR[jj * GN + ii]][0])
+			var gi := jj * GN + ii
+			img.set_pixel(ii, jj, TXC[GR[gi]][0])
+			if BRI[gi] > 0:
+				timg.set_pixel(ii, jj, brc[(ii + jj) % 3])
+			else:
+				timg.set_pixel(ii, jj, TXC[GR[gi]][(ii * 7 + jj * 13) % 3])
 	var roadc := hc("#b07a3a")
 	for e in BE:
 		var p0: Vector2 = e.a * .02
@@ -977,7 +1009,11 @@ func gen_world(sd: String):
 	for b2 in MN:
 		img.fill_rect(Rect2i(int(b2.x * .02) - 2, int(b2.y * .02) - 2, 5, 5), gold_c)
 	MM = ImageTexture.create_from_image(img)
+	TT = ImageTexture.create_from_image(timg)
+	terr.queue_redraw()
 	walls.sort_custom(func(a, b): return a.x + a.y + a.w + a.h < b.x + b.y + b.w + b.h)
+	for wo in range(walls.size()):
+		walls[wo].o = wo
 
 func blocked(x: float, y: float, f: int = 0) -> bool:
 	var a = bk.get(int(x / 250.0) * 128 + int(y / 250.0))
@@ -997,6 +1033,8 @@ func collide(e, r: float):
 				continue
 			for b in a:
 				if b.f != 2 and b.f != e.fl:
+					continue
+				if e.x < b.x - r or e.x > b.x + b.w + r or e.y < b.y - r or e.y > b.y + b.h + r:
 					continue
 				var px := clampf(e.x, b.x, b.x + b.w)
 				var py := clampf(e.y, b.y, b.y + b.h)
@@ -1074,21 +1112,21 @@ func new_game():
 	bul = []
 	fx = []
 	feed = []
-	items = []
+	IG = {}
 	specT = null
 	for p in loot:
 		var it := rl(p.wc, p.q)
 		it.x = p.x
 		it.y = p.y
 		it.fl = p.fl
-		items.append(it)
+		add_item(it)
 	for i in range(300):
 		var p2 := rland()
 		if not in_b(p2[0], p2[1], 20.0) and not blocked(p2[0], p2[1], 0):
 			var it2 := rl(.12, 0.0)
 			it2.x = p2[0]
 			it2.y = p2[1]
-			items.append(it2)
+			add_item(it2)
 	var A0 = IC[0]
 	var A1 = IC[1]
 	var L0 := hyp(A1[0] - A0[0], A1[1] - A0[1])
@@ -1209,7 +1247,7 @@ func die(o, s):
 		it.k = "w"
 		it.w = o.w
 		it.fl = o.fl
-		items.append(it)
+		add_item(it)
 	var left := alive_count()
 	if s != null and s != o:
 		s.kills += 1
@@ -1277,7 +1315,7 @@ func pick(e, it):
 			d.w = e.w
 			d.nb = true
 			d.fl = e.fl
-			items.append(d)
+			add_item(d)
 		e.w = it.w
 	elif it.k == "h":
 		e.mk = mini(5, e.mk + 1)
@@ -1286,15 +1324,35 @@ func pick(e, it):
 		e.sc = minf(e.sc, 4.0)
 	else:
 		e.ar = minf(100.0, e.ar + 45.0)
-	items.erase(it)
+	rem_item(it)
 	e.pk = 1.2
 	if e.human:
 		sfx("pick")
 
+func add_item(it: Item):
+	var key := int(it.x / 250.0) * 128 + int(it.y / 250.0)
+	if not IG.has(key):
+		IG[key] = []
+	IG[key].append(it)
+
+func rem_item(it: Item):
+	var key := int(it.x / 250.0) * 128 + int(it.y / 250.0)
+	if IG.has(key):
+		IG[key].erase(it)
+
+func items_rect(x0: float, y0: float, x1: float, y1: float) -> Array:
+	var out := []
+	for i in range(maxi(0, int(x0 / 250.0)), int(x1 / 250.0) + 1):
+		for j in range(maxi(0, int(y0 / 250.0)), int(y1 / 250.0) + 1):
+			var a = IG.get(i * 128 + j)
+			if a != null:
+				out.append_array(a)
+	return out
+
 func near(e, r: float):
 	var b = null
 	var bd := r
-	for it in items:
+	for it in items_rect(e.x - r, e.y - r, e.x + r, e.y + r):
 		if it.fl == e.fl:
 			var d := hyp(it.x - e.x, it.y - e.y)
 			if d < bd:
@@ -1487,7 +1545,7 @@ func bot(e, dt: float):
 		if e.tg == null or e.w < 0:
 			var idm := 800.0 if e.w < 0 else 300.0
 			var bi = null
-			for it in items:
+			for it in items_rect(e.x - idm, e.y - idm, e.x + idm, e.y + idm):
 				if it.fl != e.fl:
 					continue
 				var want := false
@@ -1597,26 +1655,43 @@ func upd(dt: float):
 	var pp := Vector2(PA.sx + PA.dx * PA.sp * pt, PA.sy + PA.dy * PA.sp * pt)
 	if not Z.on and pt >= tEnd:
 		Z.on = true
+	frame_i += 1
 	for e in ents:
 		if not e.alive:
 			continue
-		e.cd -= dt
-		e.slow -= dt
-		e.pk -= dt
-		e.sc -= dt
-		e.inv -= dt
-		e.spd -= dt
-		e.rage -= dt
-		e.ls -= dt
-		e.cl -= dt
-		e.sh -= dt
+		var edt := dt
+		if e.st == 2 and not e.human:
+			var fdx: float = e.x - cam_x
+			var fdy: float = e.y - cam_y
+			var fdist := fdx * fdx + fdy * fdy
+			if fdist > 2250000.0:
+				var every := 2
+				if fdist > 12250000.0:
+					every = 3
+				e.acc += dt
+				if (frame_i + e.id) % every != 0:
+					continue
+				edt = e.acc
+				e.acc = 0.0
+			else:
+				e.acc = 0.0
+		e.cd -= edt
+		e.slow -= edt
+		e.pk -= edt
+		e.sc -= edt
+		e.inv -= edt
+		e.spd -= edt
+		e.rage -= edt
+		e.ls -= edt
+		e.cl -= edt
+		e.sh -= edt
 		if e.hl > 0.0:
-			var xh := minf(e.hl, 24.0 * dt)
+			var xh := minf(e.hl, 24.0 * edt)
 			e.hl -= xh
 			e.hp = minf(100.0, e.hp + xh)
 		if e.pois > 0.0:
-			e.pois -= dt
-			hurt(e, 4.0 * dt, null)
+			e.pois -= edt
+			hurt(e, 4.0 * edt, null)
 		if not e.alive:
 			continue
 		if e.st == 0:
@@ -1625,7 +1700,7 @@ func upd(dt: float):
 			if (e.human and pt >= tEnd) or (not e.human and pt >= e.jt):
 				jump(e)
 		elif e.st == 1:
-			e.fT -= dt
+			e.fT -= edt
 			var dx := 0.0
 			var dy := 0.0
 			var sp := 0.0
@@ -1648,8 +1723,8 @@ func upd(dt: float):
 			if d == 0.0:
 				d = 1.0
 			if d > 20.0 or (e.human and (joy.mx != 0.0 or joy.my != 0.0)):
-				e.x += dx / d * sp * dt
-				e.y += dy / d * sp * dt
+				e.x += dx / d * sp * edt
+				e.y += dy / d * sp * edt
 			e.x = clampf(e.x, 20.0, W - 20.0)
 			e.y = clampf(e.y, 20.0, W - 20.0)
 			if e.fT <= 0.0:
@@ -1657,7 +1732,7 @@ func upd(dt: float):
 				e.cd = .4
 				snap(e)
 		else:
-			e.stc -= dt
+			e.stc -= edt
 			e.im = false
 			for m in MN:
 				if e.x > m.x and e.x < m.x + m.w and e.y > m.y and e.y < m.y + m.h:
@@ -1679,9 +1754,9 @@ func upd(dt: float):
 				var vm := iv(mx, my)
 				if mg > .05:
 					e.ang = atan2(vm.y, vm.x)
-				mv(e, vm.x, vm.y, 190.0, dt)
+				mv(e, vm.x, vm.y, 190.0, edt)
 			else:
-				bot(e, dt)
+				bot(e, edt)
 			if not e.human and e.pk <= 0.0:
 				var it = near(e, 26.0)
 				if it != null:
@@ -1693,7 +1768,7 @@ func upd(dt: float):
 			if Z.on:
 				var dz := hyp(e.x - Z.cx, e.y - Z.cy)
 				if dz > Z.r:
-					hurt(e, (2.0 + Z.ph * 2.5) * dt, null)
+					hurt(e, (2.0 + Z.ph * 2.5) * edt, null)
 	if P.alive and P.st == 2:
 		var bt = null
 		var bd := 1e9
@@ -1975,12 +2050,55 @@ func de(e, P):
 	setcur(saved)
 	e.ang = a
 
+func vis_blds() -> Array:
+	var out := []
+	var seen := {}
+	for i in range(maxi(0, int((V0x - 400.0) / 250.0)), int((V1x + 400.0) / 250.0) + 1):
+		for j in range(maxi(0, int((V0y - 400.0) / 250.0)), int((V1y + 400.0) / 250.0) + 1):
+			var a = BBK.get(i * 128 + j)
+			if a == null:
+				continue
+			for b in a:
+				if not seen.has(b):
+					seen[b] = true
+					out.append(b)
+	return out
+
+func vis_walls(cfl: int) -> Array:
+	var seen := {}
+	var ords := PackedInt32Array()
+	var out := []
+	for i in range(maxi(0, int(V0x / 250.0) - 1), int(V1x / 250.0) + 2):
+		for j in range(maxi(0, int(V0y / 250.0) - 1), int(V1y / 250.0) + 2):
+			var a = bk.get(i * 128 + j)
+			if a == null:
+				continue
+			for w in a:
+				if seen.has(w):
+					continue
+				seen[w] = true
+				if w.x < V1x and w.x + w.w > V0x and w.y < V1y and w.y + w.h > V0y and (w.f == 2 or w.f == cfl):
+					if iso:
+						ords.append(w.o)
+					else:
+						out.append(w)
+	if iso:
+		ords.sort()
+		for o in ords:
+			out.append(walls[o])
+	return out
+
 func draw_doors(cfl: int):
 	var a := .65 + .35 * sin(Time.get_ticks_msec() / 220.0)
-	for d in DR:
-		if (d.f == 2 or d.f == cfl) and vis(d.x, d.y, 90.0):
-			draw_rect(Rect2(d.x, d.y, d.w, d.h), Color(.478, .29, .118, a))
-			draw_rect(Rect2(d.x, d.y, d.w, d.h), Color(1, .824, .247, a), false, 3.0)
+	for i in range(maxi(0, int((V0x - 90.0) / 250.0)), int((V1x + 90.0) / 250.0) + 1):
+		for j in range(maxi(0, int((V0y - 90.0) / 250.0)), int((V1y + 90.0) / 250.0) + 1):
+			var arr = DBK.get(i * 128 + j)
+			if arr == null:
+				continue
+			for d in arr:
+				if d.f == 2 or d.f == cfl:
+					draw_rect(Rect2(d.x, d.y, d.w, d.h), Color(.478, .29, .118, a))
+					draw_rect(Rect2(d.x, d.y, d.w, d.h), Color(1, .824, .247, a), false, 3.0)
 
 func draw_ship():
 	var x: float = PA.sx + PA.dx * PA.sp * pt
@@ -2026,12 +2144,13 @@ func _draw():
 	vw = sz.x
 	vh = sz.y
 	if not playing or ents.is_empty():
+		terr.visible = false
 		return
 	setcur(Transform2D.IDENTITY)
-	draw_rect(Rect2(0, 0, vw, vh), hc("#10161e"))
 	var P: Ent = ents[0]
 	var ship := (P.st == 0 and P.alive)
 	if ship and mapOn:
+		terr.visible = false
 		draw_overview(P)
 		draw_ui(P, 0.0, 0.0)
 		return
@@ -2058,6 +2177,8 @@ func _draw():
 		cpx = c.x
 		cpy = c.y
 		cfl = c.fl
+	cam_x = cpx
+	cam_y = cpy
 	var s := vh / (1100.0 if ship else 540.0)
 	var cx := cpx - vw / 2.0 / s
 	var cy := cpy - vh / 2.0 / s
@@ -2076,22 +2197,14 @@ func _draw():
 	else:
 		base = Transform2D(0.0, Vector2(s, s), 0.0, Vector2.ZERO) * Transform2D(0.0, Vector2(-cx, -cy))
 	setcur(base)
-	# tanah
-	var bt1 := hc("#9a6a35")
-	var bt2 := hc("#4a2c10")
-	for i in range(maxi(0, int(V0x / 50.0)), mini(GN - 1, int(V1x / 50.0)) + 1):
-		for j in range(maxi(0, int(V0y / 50.0)), mini(GN - 1, int(V1y / 50.0)) + 1):
-			var q := j * GN + i
-			if BRI[q] > 0:
-				draw_rect(Rect2(i * 50, j * 50, 51, 51), bt1)
-				for yy in [9, 19, 29, 39, 49]:
-					draw_rect(Rect2(i * 50, j * 50 + yy, 51, 1), bt2)
-			else:
-				draw_rect(Rect2(i * 50, j * 50, 51, 51), TXC[GR[q]][(i * 7 + j * 13) % 3])
+	# tanah: satu tekstur statis di node anak (sangat ringan)
+	terr.transform = base
+	terr.visible = true
 	if iso:
 		draw_doors(cfl)
 	# lantai bangunan
-	for b in B:
+	var vb := vis_blds()
+	for b in vb:
 		if vis(b.x + b.w / 2.0, b.y + b.h / 2.0, 400.0):
 			draw_rect(Rect2(b.x - 30.0, b.y - 30.0, b.w + 60.0, b.h + 60.0), hc("#8a9199"))
 			draw_rect(Rect2(b.x, b.y, b.w, b.h), hc("#7b2d3b") if (b.m and cfl == 1) else hc("#b9aa90"))
@@ -2120,7 +2233,7 @@ func _draw():
 				draw_circle(Vector2(d2[0], d2[1]), d2[2], hc("#7d838a"))
 				draw_circle(Vector2(d2[0] - d2[2] * .25, d2[1] - d2[2] * .25), d2[2] * .5, hc("#a3a9b0"))
 	# dinding
-	for w in walls:
+	for w in vis_walls(cfl):
 		if w.x < V1x and w.x + w.w > V0x and w.y < V1y and w.y + w.h > V0y and (w.f == 2 or w.f == cfl):
 			if iso:
 				var H := 16.0 if w.w == w.h else 38.0
@@ -2136,7 +2249,7 @@ func _draw():
 				draw_rect(Rect2(w.x, w.y, w.w, w.h), hc("#4b4f57"))
 	# item
 	var saved_it := cur
-	for it in items:
+	for it in items_rect(V0x - 20.0, V0y - 20.0, V1x + 20.0, V1y + 20.0):
 		if not vis(it.x, it.y, 20.0):
 			continue
 		if it.fl != cfl and (it.fl == 1 or in_m(it.x, it.y)):
@@ -2213,7 +2326,7 @@ func _draw():
 				setcur(saved_t)
 	# atap rumah (mode 2D)
 	if not iso:
-		for b3 in B:
+		for b3 in vb:
 			if vis(b3.x + b3.w / 2.0, b3.y + b3.h / 2.0, 300.0):
 				var inn: bool = c != null and c.x > b3.x and c.x < b3.x + b3.w and c.y > b3.y and c.y < b3.y + b3.h
 				var aa := .12 if inn else .97
@@ -2249,34 +2362,55 @@ func _draw():
 
 func draw_zone():
 	var r: float = maxf(1.0, Z.r)
-	var corners := [Vector2(V0x, V0y), Vector2(V1x, V0y), Vector2(V0x, V1y), Vector2(V1x, V1y)]
+	var zx: float = Z.cx
+	var zy: float = Z.cy
 	var rb := 0.0
-	for p in corners:
-		rb = maxf(rb, hyp(p.x - Z.cx, p.y - Z.cy))
-	rb += 150.0
-	var n := clampi(int(r / 50.0), 64, 300)
-	if rb > r:
+	for pc in [Vector2(V0x, V0y), Vector2(V1x, V0y), Vector2(V0x, V1y), Vector2(V1x, V1y)]:
+		rb = maxf(rb, hyp(pc.x - zx, pc.y - zy))
+	if rb >= r - 5.0:
+		rb += 150.0
+		var n := clampi(int(r / 60.0), 48, 360)
 		var red := Color(.878, .157, .235, .25)
-		var pa := Vector2(Z.cx + r, Z.cy)
-		var pb := Vector2(Z.cx + rb, Z.cy)
+		var cols := PackedColorArray([red, red, red, red])
+		var nouv := PackedVector2Array()
+		var edge := hc("#4fc3ff")
+		var pa := Vector2(zx + r, zy)
+		var pb := Vector2(zx + rb, zy)
 		for k in range(1, n + 1):
 			var a := TAU * k / n
-			var ca_ := cos(a)
-			var sa_ := sin(a)
-			var pa2 := Vector2(Z.cx + ca_ * r, Z.cy + sa_ * r)
-			var pb2 := Vector2(Z.cx + ca_ * rb, Z.cy + sa_ * rb)
-			draw_colored_polygon(PackedVector2Array([pa, pb, pb2, pa2]), red)
+			var cs := cos(a)
+			var sn := sin(a)
+			var pa2 := Vector2(zx + cs * r, zy + sn * r)
+			var pb2 := Vector2(zx + cs * rb, zy + sn * rb)
+			var mnx := minf(minf(pa.x, pb.x), minf(pa2.x, pb2.x))
+			var mxx := maxf(maxf(pa.x, pb.x), maxf(pa2.x, pb2.x))
+			var mny := minf(minf(pa.y, pb.y), minf(pa2.y, pb2.y))
+			var mxy := maxf(maxf(pa.y, pb.y), maxf(pa2.y, pb2.y))
+			if not (mxx < V0x or mnx > V1x or mxy < V0y or mny > V1y):
+				draw_primitive(PackedVector2Array([pa, pb, pb2, pa2]), cols, nouv)
+				draw_line(pa, pa2, edge, 4.0)
 			pa = pa2
 			pb = pb2
-	var ring := clampi(int(r / 40.0), 64, 1024)
-	draw_arc(Vector2(Z.cx, Z.cy), r, 0.0, TAU, ring, hc("#4fc3ff"), 4.0)
 	if Z.ph < ZR.size() and Z.t < ZD:
-		var nn := clampi(int(Z.nr * TAU / 40.0), 32, 400)
-		var w1 := Color(1, 1, 1, .85)
-		for k2 in range(0, nn, 2):
-			var a1 := TAU * k2 / nn
-			var a2 := TAU * (k2 + 1) / nn
-			draw_line(Vector2(Z.nx + cos(a1) * Z.nr, Z.ny + sin(a1) * Z.nr), Vector2(Z.nx + cos(a2) * Z.nr, Z.ny + sin(a2) * Z.nr), w1, 2.0)
+		var vcx := (V0x + V1x) / 2.0
+		var vcy := (V0y + V1y) / 2.0
+		var vrad := hyp(V1x - V0x, V1y - V0y) / 2.0
+		var nr: float = Z.nr
+		var nxz: float = Z.nx
+		var nyz: float = Z.ny
+		if absf(hyp(vcx - nxz, vcy - nyz) - nr) < vrad:
+			var nn := clampi(int(nr * TAU / 40.0), 32, 400)
+			var w1 := Color(1, 1, 1, .85)
+			var ax := nxz + nr
+			var ay := nyz
+			for k2 in range(1, nn + 1):
+				var a1 := TAU * k2 / nn
+				var bx := nxz + cos(a1) * nr
+				var by := nyz + sin(a1) * nr
+				if k2 % 2 == 1 and bx > V0x - 60.0 and bx < V1x + 60.0 and by > V0y - 60.0 and by < V1y + 60.0:
+					draw_line(Vector2(ax, ay), Vector2(bx, by), w1, 2.0)
+				ax = bx
+				ay = by
 
 func draw_overview(P):
 	var o := ovr()
